@@ -1,11 +1,28 @@
 const fetch = require('./paginatedFetch');
+const mapLimit = require('async/mapLimit');
 
 const BASE_URL = 'https://api.github.com';
+const CONNECTION_LIMIT = 10;
 
-const userNamesToRepoPromises = (userNames, token) =>
-  userNames.map(userName =>
-    fetch(`${BASE_URL}/users/${userName}/repos`, token)
-  );
+const fetchUserReposByName = (userNames, token) =>
+  new Promise((resolve, reject) => {
+    mapLimit(
+      userNames,
+      CONNECTION_LIMIT,
+      (userName, cb) => {
+        const uri = `${BASE_URL}/users/${userName}/repos`;
+        fetch(uri, token)
+          .then(result => cb(null, result), cb)
+      },
+      (err, results) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(results);
+        }
+      }
+    )
+  });
 
 const userReposToStats = userRepos =>
   userRepos.reduce(
@@ -28,18 +45,18 @@ module.exports = (orgName, token) =>
     fetch(`${BASE_URL}/orgs/${orgName}/members`, token)
       .then(members => {
         const userNames = members.map(item => item['login']);
-        Promise.all(userNamesToRepoPromises(userNames, token))
-          .then(userRepos =>
-            resolve(
-              userRepos
-                .map((repos, index) =>
-                  Object.assign(
-                    { userName: userNames[index] },
-                    userReposToStats(repos)
-                  )
+        fetchUserReposByName(userNames, token)
+          .then(userRepos => {
+            const userStats = userRepos
+              .map((repos, index) =>
+                Object.assign(
+                  {userName: userNames[index]},
+                  userReposToStats(repos)
                 )
-                .sort((a, b) => a.stars < b.stars)
-            )
+              )
+              .sort((a, b) => a.stars < b.stars);
+            resolve(userStats);
+            }
           )
           .catch(reject);
       })
